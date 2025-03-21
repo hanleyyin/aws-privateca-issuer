@@ -67,6 +67,7 @@ jobs:
             pkg_version=${{ steps.tag.outputs.tag }}
           context: .
           platforms: linux/arm64
+          provenance: false
           tags: |
             ${{ env.TAG_BASE }}:${{steps.tag.outputs.tag}}-arm64
           push: true
@@ -77,6 +78,7 @@ jobs:
             pkg_version=${{ steps.tag.outputs.tag }}
           context: .
           platforms: linux/amd64
+          provenance: false
           tags: |
             ${{ env.TAG_BASE }}:${{steps.tag.outputs.tag}}-amd64
           push: true
@@ -87,6 +89,7 @@ jobs:
             pkg_version=${{ steps.tag.outputs.tag }}
           context: .
           platforms: linux/amd64,linux/arm64
+          provenance: false
           tags: |
             ${{ env.TAG_BASE }}:latest
             ${{ env.TAG_BASE }}:${{steps.tag.outputs.tag}}
