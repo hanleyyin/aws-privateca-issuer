@@ -30,6 +30,9 @@ RUN --mount=type=cache,target=${go_cache} --mount=type=cache,target=${go_mod_cac
 
 ARG pkg_version
 
+ARG user_agent="aws-privateca-issuer"
+ENV user_agent=${user_agent}
+
 # Build
 RUN --mount=type=cache,target=${go_cache} --mount=type=cache,target=${go_mod_cache} \
     VERSION=$pkg_version && \

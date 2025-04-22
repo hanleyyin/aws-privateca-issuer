@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -142,7 +143,7 @@ func ClearProvisioners() {
 }
 
 // GetProvisioner gets a provisioner that has previously been stored or creates a new one
-func GetProvisioner(ctx context.Context, client client.Client, name types.NamespacedName, spec *api.AWSPCAIssuerSpec) (GenericProvisioner, error) {
+func GetProvisioner(ctx context.Context, client client.Client, name types.NamespacedName, spec *api.AWSPCAIssuerSpec, log logr.Logger) (GenericProvisioner, error) {
 	value, _ := collection.Load(name)
 	p, isProvisioner := value.(GenericProvisioner)
 	if isProvisioner {
@@ -156,13 +157,22 @@ func GetProvisioner(ctx context.Context, client client.Client, name types.Namesp
 
 	provisioner := &PCAProvisioner{
 		pcaClient: acmpca.NewFromConfig(config, acmpca.WithAPIOptions(
-			middleware.AddUserAgentKeyValue("aws-privateca-issuer", injections.PlugInVersion),
+			middleware.AddUserAgentKeyValue(getEnv("user_agent", "aws-privateca-issuer", log), injections.PlugInVersion),
 		)),
 		arn: spec.Arn,
 	}
 	collection.Store(name, provisioner)
 
 	return provisioner, nil
+}
+
+func getEnv(key, fallback string, log logr.Logger) string {
+	if value, ok := os.LookupEnv(key); ok {
+		log.Info("looked up " + key + "from env, got :" + value)
+		return value
+	}
+	log.Info("failed to lookup " + key + "from env, falling back to  :" + fallback)
+	return fallback
 }
 
 // idempotencyToken is limited to 64 ASCII characters, so make a fixed length hash.
