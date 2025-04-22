@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 env:
-  PUBLIC_REGISTRY: public.ecr.aws/k1n1h4h4
-  PRIVATE_REGISTRY: 105154636954.dkr.ecr.us-east-1.amazonaws.com
+  PUBLIC_REGISTRY: public.ecr.aws/o0l9c1h8
+  PRIVATE_REGISTRY: 992382396819.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
   build:
@@ -27,7 +27,7 @@ jobs:
       - name: Setup AWS Credentials
         uses: aws-actions/configure-aws-credentials@master
         with:
-          role-to-assume: arn:aws:iam::105154636954:role/GithubActionsPublishRole-prod-us-east-1
+          role-to-assume: arn:aws:iam::992382396819:role/GithubActionsPublishRole-yhanley-us-east-1
           aws-region: us-east-1
       - name: Login to Public ECR
         uses: docker/login-action@v1
