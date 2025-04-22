@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -156,13 +157,20 @@ func GetProvisioner(ctx context.Context, client client.Client, name types.Namesp
 
 	provisioner := &PCAProvisioner{
 		pcaClient: acmpca.NewFromConfig(config, acmpca.WithAPIOptions(
-			middleware.AddUserAgentKeyValue("aws-privateca-issuer", injections.PlugInVersion),
+			middleware.AddUserAgentKeyValue(getEnv("user_agent", "aws-privateca-issuer"), injections.PlugInVersion),
 		)),
 		arn: spec.Arn,
 	}
 	collection.Store(name, provisioner)
 
 	return provisioner, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }
 
 // idempotencyToken is limited to 64 ASCII characters, so make a fixed length hash.
