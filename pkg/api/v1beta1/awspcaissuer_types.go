@@ -43,6 +43,16 @@ type AWSPCAIssuerSpec struct {
 	// Specifies PCA template configuration for this issuer.
 	// +optional
 	PCATemplate *PCATemplate `json:"pcaTemplate,omitempty"`
+	// ValidityNotBefore controls the NotBefore field of issued certificates.
+	// If unset (default), PCA applies its default 1h backdate for clock-skew tolerance.
+	// If set, this offset is added to time.Now() at issuance to produce the NotBefore
+	// timestamp passed to PCA. Use a small negative value (e.g. -30s) to preserve
+	// modest clock-skew tolerance while avoiding the interaction with SPIFFE clients
+	// (e.g. ztunnel) that anchor cert rotation half-life on NotBefore and hot-loop
+	// on short-lived certs when PCA's default 1h backdate exceeds the cert lifetime.
+	// See https://github.com/cert-manager/aws-privateca-issuer/issues/479.
+	// +optional
+	ValidityNotBefore *metav1.Duration `json:"validityNotBefore,omitempty"`
 }
 
 // PCATemplate defines PCA template configuration

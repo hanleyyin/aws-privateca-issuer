@@ -70,10 +70,11 @@ type acmPCAClient interface {
 
 // PCAProvisioner contains logic for issuing PCA certificates
 type PCAProvisioner struct {
-	pcaClient        acmPCAClient
-	arn              string
-	signingAlgorithm *acmpcatypes.SigningAlgorithm
-	clock            func() time.Time
+	pcaClient         acmPCAClient
+	arn               string
+	signingAlgorithm  *acmpcatypes.SigningAlgorithm
+	clock             func() time.Time
+	validityNotBefore *metav1.Duration
 }
 
 func GetConfig(ctx context.Context, client client.Client, spec *api.AWSPCAIssuerSpec) (aws.Config, error) {
@@ -159,8 +160,10 @@ func DeleteProvisioner(ctx context.Context, client client.Client, name types.Nam
 // GetProvisioner gets a provisioner that has previously been stored or creates a new one
 func GetProvisioner(ctx context.Context, client client.Client, name types.NamespacedName, spec *api.AWSPCAIssuerSpec) (GenericProvisioner, error) {
 	value, _ := collection.Load(name)
-	p, isProvisioner := value.(GenericProvisioner)
+	p, isProvisioner := value.(*PCAProvisioner)
 	if isProvisioner {
+		// Refresh spec-derived fields in case the issuer spec was updated.
+		p.validityNotBefore = spec.ValidityNotBefore
 		return p, nil
 	}
 
@@ -173,7 +176,8 @@ func GetProvisioner(ctx context.Context, client client.Client, name types.Namesp
 		pcaClient: acmpca.NewFromConfig(config, acmpca.WithAPIOptions(
 			middleware.AddUserAgentKeyValue(injections.UserAgent, injections.PlugInVersion),
 		)),
-		arn: spec.Arn,
+		arn:               spec.Arn,
+		validityNotBefore: spec.ValidityNotBefore,
 	}
 	collection.Store(name, provisioner)
 
@@ -220,6 +224,14 @@ func (p *PCAProvisioner) Sign(ctx context.Context, cr *cmapi.CertificateRequest,
 			Value: &validityExpiration,
 		},
 		IdempotencyToken: aws.String(token),
+	}
+
+	if p.validityNotBefore != nil {
+		notBefore := p.now().Add(p.validityNotBefore.Duration).Unix()
+		issueParams.ValidityNotBefore = &acmpcatypes.Validity{
+			Type:  acmpcatypes.ValidityPeriodTypeAbsolute,
+			Value: &notBefore,
+		}
 	}
 
 	issueOutput, err := p.pcaClient.IssueCertificate(ctx, &issueParams)

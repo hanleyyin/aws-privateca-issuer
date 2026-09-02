@@ -840,6 +840,66 @@ func TestPCASignValidity(t *testing.T) {
 	}
 }
 
+func TestPCASignValidityNotBefore(t *testing.T) {
+	now := time.Now()
+	type testCase struct {
+		validityNotBefore     *metav1.Duration
+		expectSet             bool
+		expectedNotBeforeUnix int64
+	}
+	tests := map[string]testCase{
+		"unset - PCA default backdate applied": {
+			validityNotBefore: nil,
+			expectSet:         false,
+		},
+		"negative offset - small backdate": {
+			validityNotBefore:     ptrDuration(metav1.Duration{Duration: -30 * time.Second}),
+			expectSet:             true,
+			expectedNotBeforeUnix: now.Add(-30 * time.Second).Unix(),
+		},
+		"positive offset - forward NotBefore": {
+			validityNotBefore:     ptrDuration(metav1.Duration{Duration: 5 * time.Minute}),
+			expectSet:             true,
+			expectedNotBeforeUnix: now.Add(5 * time.Minute).Unix(),
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			client := &workingACMPCAClient{}
+			provisioner := PCAProvisioner{
+				arn:               caArn,
+				pcaClient:         client,
+				validityNotBefore: tc.validityNotBefore,
+			}
+			provisioner.clock = func() time.Time { return now }
+
+			key, _ := rsa.GenerateKey(rand.Reader, 2048)
+			csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &template, key)
+			cr := &cmapi.CertificateRequest{
+				Spec: cmapi.CertificateRequestSpec{
+					Request: pem.EncodeToMemory(&pem.Block{
+						Bytes: csrBytes,
+						Type:  "CERTIFICATE REQUEST",
+					}),
+				},
+			}
+
+			require.NoError(t, provisioner.Sign(context.TODO(), cr, "", logr.Discard()))
+			got := client.issueCertInput
+			require.NotNil(t, got)
+			if !tc.expectSet {
+				assert.Nil(t, got.ValidityNotBefore, "ValidityNotBefore must be nil when spec field unset")
+				return
+			}
+			require.NotNil(t, got.ValidityNotBefore)
+			assert.Equal(t, acmpcatypes.ValidityPeriodTypeAbsolute, got.ValidityNotBefore.Type)
+			require.NotNil(t, got.ValidityNotBefore.Value)
+			assert.Equal(t, tc.expectedNotBeforeUnix, *got.ValidityNotBefore.Value)
+		})
+	}
+}
+
 func ptrInt(i int64) *int64 {
 	return &i
 }

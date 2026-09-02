@@ -86,6 +86,37 @@ This is a regular namespaced issuer that can be used as a reference in your Cert
 
 This CR is identical to the AWSPCAIssuer. The only difference being that it's not namespaced and can be referenced from anywhere.
 
+### Controlling the NotBefore Backdate (`spec.validityNotBefore`)
+
+By default, AWS Private CA backdates the `NotBefore` field of every issued certificate
+by approximately 1 hour to tolerate clock skew between clients. This is normally harmless,
+but it breaks SPIFFE-shaped clients that anchor their certificate rotation half-life on
+`NotBefore` rather than `NotAfter` (for example `ztunnel` in Istio ambient mode). When the
+issued certificate's lifetime is shorter than PCA's backdate, such clients compute a
+rotation target in the past and hot-loop re-issuing certificates, exhausting PCA request
+quotas. See upstream issue
+[#479](https://github.com/cert-manager/aws-privateca-issuer/issues/479) for the full
+mechanism.
+
+To work around this, set `spec.validityNotBefore` on the `AWSPCAIssuer` or
+`AWSPCAClusterIssuer`. The value is a signed Go `Duration` string added to the current
+time at issuance to produce the `NotBefore` timestamp passed to PCA. A small negative
+value preserves modest clock-skew tolerance while avoiding the SPIFFE interaction:
+
+```yaml
+apiVersion: awspca.cert-manager.io/v1beta1
+kind: AWSPCAClusterIssuer
+metadata:
+  name: my-issuer
+spec:
+  arn: arn:aws:acm-pca:us-east-1:111122223333:certificate-authority/...
+  region: us-east-1
+  validityNotBefore: -30s
+```
+
+Omitting the field preserves the existing default PCA backdate behavior; this change is
+fully backwards-compatible and opt-in.
+
 ### Usage with cert-manager Ingress Annotations
 
 The `cert-manager.io/cluster-issuer` annotation cannot be used to point at a `AWSPCAClusterIssuer`. Instead, use `cert-manager.io/issuer:`. Please see [this issue](https://github.com/cert-manager/aws-privateca-issuer/issues/252) for more information.
