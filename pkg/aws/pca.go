@@ -48,6 +48,18 @@ import (
 
 const DEFAULT_DURATION = 30 * 24 * 3600
 
+// ValidityNotBeforeAnnotation is an optional annotation on a CertificateRequest that
+// controls the NotBefore time of the issued certificate. Its value is a Go duration
+// string (see time.ParseDuration) applied relative to the time the certificate is
+// requested.
+//
+// Negative values are the intended use: they backdate NotBefore by a small, explicit
+// amount to absorb clock skew between the issuer and relying parties, for example
+// "-30s". When the annotation is absent no ValidityNotBefore is sent to AWS Private CA,
+// and the service applies its own default backdate of approximately one hour, which is
+// the historical behaviour of this issuer.
+var ValidityNotBeforeAnnotation = api.GroupVersion.Group + "/validity-not-before"
+
 var (
 	ErrNoSecretAccessKey = errors.New("no AWS Secret Access Key Found")
 	ErrNoAccessKeyID     = errors.New("no AWS Access Key ID Found")
@@ -222,6 +234,14 @@ func (p *PCAProvisioner) Sign(ctx context.Context, cr *cmapi.CertificateRequest,
 		IdempotencyToken: aws.String(token),
 	}
 
+	validityNotBefore, err := p.validityNotBefore(cr, validityExpiration)
+	if err != nil {
+		return err
+	}
+	if validityNotBefore != nil {
+		issueParams.ValidityNotBefore = validityNotBefore
+	}
+
 	issueOutput, err := p.pcaClient.IssueCertificate(ctx, &issueParams)
 
 	if err != nil {
@@ -233,6 +253,37 @@ func (p *PCAProvisioner) Sign(ctx context.Context, cr *cmapi.CertificateRequest,
 	log.Info("Issued certificate with arn: " + *issueOutput.CertificateArn)
 
 	return nil
+}
+
+// validityNotBefore reads the optional ValidityNotBeforeAnnotation off the
+// CertificateRequest and turns it into an absolute ValidityNotBefore for PCA.
+//
+// It returns (nil, nil) when the annotation is absent, so that the request is byte
+// identical to one made by an issuer that does not know about the annotation. A value
+// that cannot be parsed, or that would place NotBefore at or after the certificate's
+// NotAfter, is returned as an error: silently falling back to the PCA default backdate
+// would hide the very problem the annotation exists to fix.
+func (p *PCAProvisioner) validityNotBefore(cr *cmapi.CertificateRequest, validityExpiration int64) (*acmpcatypes.Validity, error) {
+	raw, exists := cr.ObjectMeta.GetAnnotations()[ValidityNotBeforeAnnotation]
+	if !exists {
+		return nil, nil
+	}
+
+	offset, err := time.ParseDuration(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s annotation %q: %v", ValidityNotBeforeAnnotation, raw, err)
+	}
+
+	notBefore := p.now().Add(offset).Unix()
+	if notBefore >= validityExpiration {
+		return nil, fmt.Errorf("invalid %s annotation %q: it places NotBefore (%d) at or after NotAfter (%d)",
+			ValidityNotBeforeAnnotation, raw, notBefore, validityExpiration)
+	}
+
+	return &acmpcatypes.Validity{
+		Type:  acmpcatypes.ValidityPeriodTypeAbsolute,
+		Value: &notBefore,
+	}, nil
 }
 
 func (p *PCAProvisioner) Get(ctx context.Context, cr *cmapi.CertificateRequest, certArn string, log logr.Logger) ([]byte, []byte, error) {

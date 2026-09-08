@@ -203,6 +203,62 @@ This table shows how the UsageTypes are being translated into which template to 
 | ClientAuth, ServerAuth     | acm-pca:::template/EndEntityCertificate/V1                       |
 | Everything Else            | acm-pca:::template/BlankEndEntityCertificate_APICSRPassthrough/V1   |
 
+## Controlling the certificate NotBefore time
+
+AWS Private CA sets `NotBefore` to approximately one hour before the time of the
+`IssueCertificate` call when the caller does not supply a `ValidityNotBefore`. Clients that
+compute their renewal time as the half-life of the certificate — `NotBefore + (NotAfter -
+NotBefore) / 2`, which is what SPIFFE implementations such as Istio's `ztunnel` do — read that
+backdate as elapsed lifetime. For a one hour certificate the half-life then lands at, or before,
+the moment the certificate was issued, so the client immediately requests a replacement and every
+replacement is renewed on arrival. See [issue
+#479](https://github.com/cert-manager/aws-privateca-issuer/issues/479).
+
+The `awspca.cert-manager.io/validity-not-before` annotation on a `CertificateRequest` sets
+`NotBefore` explicitly. Its value is a [Go duration
+string](https://pkg.go.dev/time#ParseDuration) applied relative to the time the certificate is
+requested; negative values are the intended use, backdating `NotBefore` by a small, deliberate
+amount to absorb clock skew instead of a full hour.
+
+cert-manager copies the annotations on a `Certificate` onto the `CertificateRequest` it creates,
+so the annotation is set on the `Certificate`:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: short-lived-cert
+  namespace: default
+  annotations:
+    awspca.cert-manager.io/validity-not-before: "-30s"
+spec:
+  commonName: short-lived-cert
+  duration: 1h
+  secretName: short-lived-cert-tls
+  issuerRef:
+    group: awspca.cert-manager.io
+    kind: AWSPCAIssuer
+    name: pca-issuer
+```
+
+For the `ztunnel` workload-certificate path, `cert-manager-istio-csr` creates the
+`CertificateRequest` itself. Set the annotation on every request it makes through its
+`app.certmanager.additionalAnnotations` Helm value:
+
+```yaml
+app:
+  certmanager:
+    additionalAnnotations:
+      - name: awspca.cert-manager.io/validity-not-before
+        value: "-30s"
+```
+
+If the annotation is absent, no `ValidityNotBefore` is sent to AWS Private CA and the service's
+default backdate applies, unchanged. If the annotation is present but its value cannot be parsed,
+or would place `NotBefore` at or after the certificate's `NotAfter`, the `CertificateRequest` is
+marked as failed with a message naming the annotation and the reason — the request is not silently
+issued with the default backdate.
+
 ## Understanding/Running the tests
 
 ### Running the Unit Tests

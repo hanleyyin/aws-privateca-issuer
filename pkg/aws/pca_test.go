@@ -847,3 +847,92 @@ func ptrInt(i int64) *int64 {
 func ptrDuration(d metav1.Duration) *metav1.Duration {
 	return &d
 }
+
+func TestPCASignValidityNotBefore(t *testing.T) {
+	now := time.Now()
+	client := &workingACMPCAClient{}
+	provisioner := PCAProvisioner{arn: caArn, pcaClient: client}
+	provisioner.clock = func() time.Time { return now }
+
+	type testCase struct {
+		annotation             *string
+		duration               *metav1.Duration
+		expectFailure          bool
+		expectedErrorSubstring string
+		expectedNotBefore      *int64
+	}
+
+	tests := map[string]testCase{
+		"annotation absent": {
+			annotation:        nil,
+			expectedNotBefore: nil,
+		},
+		"negative offset": {
+			annotation:        ptrString("-30s"),
+			expectedNotBefore: ptrInt(now.Add(-30 * time.Second).Unix()),
+		},
+		"zero offset": {
+			annotation:        ptrString("0s"),
+			expectedNotBefore: ptrInt(now.Unix()),
+		},
+		"malformed value": {
+			annotation:             ptrString("thirty seconds ago"),
+			expectFailure:          true,
+			expectedErrorSubstring: ValidityNotBeforeAnnotation,
+		},
+		"not before at or after not after": {
+			annotation:             ptrString("2h"),
+			duration:               ptrDuration(metav1.Duration{Duration: time.Hour}),
+			expectFailure:          true,
+			expectedErrorSubstring: "at or after NotAfter",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			client.issueCertInput = nil
+			key, _ := rsa.GenerateKey(rand.Reader, 2048)
+			csrBytes, _ := x509.CreateCertificateRequest(rand.Reader, &template, key)
+
+			cr := &cmapi.CertificateRequest{
+				Spec: cmapi.CertificateRequestSpec{
+					Request: pem.EncodeToMemory(&pem.Block{
+						Bytes: csrBytes,
+						Type:  "CERTIFICATE REQUEST",
+					}),
+					Duration: tc.duration,
+				},
+			}
+			if tc.annotation != nil {
+				metav1.SetMetaDataAnnotation(&cr.ObjectMeta, ValidityNotBeforeAnnotation, *tc.annotation)
+			}
+
+			err := provisioner.Sign(context.TODO(), cr, "", logr.Discard())
+
+			if tc.expectFailure {
+				require.Error(t, err, name)
+				assert.Contains(t, err.Error(), tc.expectedErrorSubstring, name)
+				assert.Nil(t, client.issueCertInput, "no request should have been made to PCA")
+				return
+			}
+
+			require.NoError(t, err, name)
+			got := client.issueCertInput
+			require.NotNil(t, got, "Expected certificate input, got none")
+
+			if tc.expectedNotBefore == nil {
+				assert.Nil(t, got.ValidityNotBefore, "ValidityNotBefore must be absent when the annotation is not set")
+				return
+			}
+
+			require.NotNil(t, got.ValidityNotBefore, name)
+			assert.Equal(t, acmpcatypes.ValidityPeriodTypeAbsolute, got.ValidityNotBefore.Type, name)
+			require.NotNil(t, got.ValidityNotBefore.Value, name)
+			assert.Equal(t, *tc.expectedNotBefore, *got.ValidityNotBefore.Value, name)
+		})
+	}
+}
+
+func ptrString(s string) *string {
+	return &s
+}
