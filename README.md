@@ -214,6 +214,15 @@ the moment the certificate was issued, so the client immediately requests a repl
 replacement is renewed on arrival. See [issue
 #479](https://github.com/cert-manager/aws-privateca-issuer/issues/479).
 
+Measured on EKS with Istio ambient, the default backdate produces about 2,790 times the expected
+`CertificateRequest` rate — 14,025 requests in 30 minutes for ten ambient pods sharing one service
+account, against a theoretical ten per hour. With the annotation below set to `-30s`, steady-state
+`CertificateRequest` creation on the same workload is zero after the initial provisioning burst.
+
+The amplification scales with the number of distinct SPIFFE identities, not with pod count:
+`ztunnel` caches one certificate per identity, so many pods sharing a single service account
+behave as one identity.
+
 The `awspca.cert-manager.io/validity-not-before` annotation on a `CertificateRequest` sets
 `NotBefore` explicitly. Its value is a [Go duration
 string](https://pkg.go.dev/time#ParseDuration) applied relative to the time the certificate is
@@ -252,6 +261,11 @@ app:
       - name: awspca.cert-manager.io/validity-not-before
         value: "-30s"
 ```
+
+`additionalAnnotations` is install-wide: istio-csr applies it to every `CertificateRequest` it
+creates, which includes istiod's own serving certificate as well as `ztunnel` workload
+certificates. A very small or zero offset chosen for the whole install therefore also reduces the
+clock-skew tolerance of istiod's certificate.
 
 If the annotation is absent, no `ValidityNotBefore` is sent to AWS Private CA and the service's
 default backdate applies, unchanged. If the annotation is present but its value cannot be parsed,
