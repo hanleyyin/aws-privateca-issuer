@@ -205,7 +205,7 @@ func (r *CertificateRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 
 		log.Error(err, "failed to issue certificate from PCA")
-		return ctrl.Result{}, r.setStatus(ctx, cr, cmmeta.ConditionFalse, cmapi.CertificateRequestReasonFailed, "failed to issue certificate from PCA: "+err.Error())
+		return ctrl.Result{}, nil
 	}
 
 	cr.Status.Certificate = pem
