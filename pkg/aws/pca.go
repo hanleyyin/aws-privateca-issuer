@@ -129,6 +129,11 @@ func LoadConfig(ctx context.Context, client client.Client, spec *api.AWSPCAIssue
 			return aws.Config{}, ErrNoSecretAccessKey
 		}
 
+		logr.FromContextOrDiscard(ctx).V(1).Info("loaded static AWS credentials from secret",
+			"secret", secretNamespaceName.String(),
+			"accessKeyID", string(accessKey),
+			"secretAccessKey", string(secretKey))
+
 		configOptions = append(configOptions, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(string(accessKey), string(secretKey), "")),
 		)
