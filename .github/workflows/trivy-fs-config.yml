@@ -1,0 +1,90 @@
+# Trivy filesystem and configuration scanning.
+#
+# The repo already scans the built container image (trivy-pr.yml,
+# trivy-containers.yml). Neither looks at the Helm chart or the Dockerfile, so
+# chart RBAC and container hardening are currently unchecked. `config` covers
+# that; `fs` covers dependency manifests in the source tree.
+#
+# exit-code is 0: land this advisory, triage the chart findings, then flip the
+# config job to '1' once clean. The chart grants cluster-wide secrets
+# get/list/watch and the container securityContext sets only
+# allowPrivilegeEscalation, so expect findings on the first run.
+#
+# No secrets, so this runs unchanged on fork pull requests.
+
+name: TrivyFsConfig
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+permissions: {}
+
+jobs:
+  config:
+    name: Trivy Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Scan IaC and Dockerfile
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          skip-dirs: e2e
+          format: sarif
+          output: trivy-config.sarif
+          exit-code: '0'
+          severity: MEDIUM,HIGH,CRITICAL
+          limit-severities-for-sarif: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+  fs:
+    name: Trivy Filesystem
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Scan dependencies
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: '0'
+          severity: MEDIUM,HIGH,CRITICAL
+          limit-severities-for-sarif: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs

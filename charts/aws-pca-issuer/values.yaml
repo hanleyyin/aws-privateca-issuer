@@ -67,6 +67,8 @@ podSecurityContext:
 # +docs:property
 securityContext:
   allowPrivilegeEscalation: false
+  # TEST ONLY - do not merge: planted to prove Trivy config catches it.
+  privileged: true
 
 # Kubernetes pod resources requests/limits
 #+docs:property
