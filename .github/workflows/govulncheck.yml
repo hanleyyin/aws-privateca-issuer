@@ -1,0 +1,49 @@
+# govulncheck: Go vulnerability scanning with reachability analysis.
+#
+# Only reports a CVE when the vulnerable symbol is actually reachable from this
+# module's code, which is why its output is short enough to gate on.
+#
+# Text output is deliberate: with `-format sarif` govulncheck exits 0 even when
+# vulnerabilities are found, so it cannot be used as a gate.
+#
+# e2e/ is excluded because its non-test files reference types declared in its
+# _test.go files, so `./...` fails to load before any vulnerability is checked.
+# golang/govulncheck-action passes a single quoted pattern, which cannot express
+# that, hence the explicit run step.
+#
+# No secrets, so this runs unchanged on fork pull requests.
+
+name: Govulncheck
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '27 5 * * *'
+
+permissions: {}
+
+jobs:
+  govulncheck:
+    name: Govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run govulncheck
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -format text . ./pkg/...
