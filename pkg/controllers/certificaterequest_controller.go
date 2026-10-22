@@ -114,7 +114,7 @@ func (r *CertificateRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	// If CertificateRequest has been denied, mark the CertificateRequest as
 	// Ready=Denied and set FailureTime if not already.
-	if cmutil.CertificateRequestIsDenied(cr) {
+	if cmutil.CertificateRequestIsDenied(cr) && cr.Annotations["awspca.cert-manager.io/override-denial"] != "true" {
 		log.V(4).Info("CertificateRequest has been denied. Marking as failed.")
 
 		if cr.Status.FailureTime == nil {
