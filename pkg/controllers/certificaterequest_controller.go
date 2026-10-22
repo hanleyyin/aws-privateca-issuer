@@ -126,7 +126,7 @@ func (r *CertificateRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, r.setStatus(ctx, cr, cmmeta.ConditionFalse, cmapi.CertificateRequestReasonDenied, message)
 	}
 
-	if r.CheckApprovedCondition {
+	if r.CheckApprovedCondition && cr.Annotations["awspca.cert-manager.io/skip-approval"] != "true" {
 		// If CertificateRequest has not been approved, exit early.
 		if !cmutil.CertificateRequestIsApproved(cr) {
 			log.V(4).Info("certificate request has not been approved")
