@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/logo.png" alt="Logo" width="250px" /></p>
 
-This plugin issues certificates from AWS Private CA for cert-manager.
+This plugin issues certificates from AWS Private CA for use with cert-manager.
 <p align="center">
 <a href="https://goreportcard.com/report/github.com/cert-manager/aws-privateca-issuer">
 <img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/cert-manager/aws-privateca-issuer" />
