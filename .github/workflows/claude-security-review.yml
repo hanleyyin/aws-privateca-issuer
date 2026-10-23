@@ -1,23 +1,4 @@
-# AI security review, gated on the safe_for_review label.
-#
-# pull_request_target runs in the base repository's context, so OIDC
-# credentials are available for pull requests from forks, which a plain
-# pull_request run never gets.
-#
-# The job condition tests github.event.label.name, the label added by the
-# triggering event. Do not change it to a check that the label is present on
-# the PR: while the label remains, any later labeled event would re-run the
-# review against whatever commit is then the head, with no maintainer
-# involved.
-#
-# Nothing from the PR is checked out. The workspace holds the base branch and
-# the diff is read over the GitHub API, so PR code never runs, and Bash is not
-# available to the reviewer.
-#
-# The review instructions are fetched at run time and masked in the log.
-# Findings are stored privately; the PR gets one comment with only a count.
-# show_full_output and display_report stay off so no model output reaches
-# the public log or step summary.
+# Keep show_full_output and display_report off: they print model output to the public log.
 
 name: ClaudeSecurityReview
 
@@ -33,9 +14,7 @@ jobs:
     if: ${{ github.event.label.name == 'safe_for_review' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Read-only on PRs: the agent runs in this job, so its token must not be
-    # able to write to GitHub even if the tool allowlist were bypassed.
-    # Comments are posted by the separate `comment` job below.
+    # Read-only: the agent runs in this job. The comment job posts.
     permissions:
       contents: read
       pull-requests: read
@@ -102,8 +81,7 @@ jobs:
             --disallowed-tools "WebFetch,WebSearch,Bash,Write,Edit"
             --json-schema '{"type":"object","properties":{"findings_count":{"type":"integer","minimum":0},"high":{"type":"integer","minimum":0,"description":"Number of reported findings with Severity High"},"medium":{"type":"integer","minimum":0,"description":"Number of reported findings with Severity Medium"},"low":{"type":"integer","minimum":0,"description":"Number of reported findings with Severity Low"},"report_markdown":{"type":"string"}},"required":["findings_count","high","medium","low","report_markdown"]}'
 
-      # The report is read from the execution file by path, never via an
-      # expression or env var: either would print it into this public log.
+      # Read the output by file path only: an expression or env var would print it to the public log.
       - name: Publish findings
         id: publish
         if: always()
@@ -112,37 +90,19 @@ jobs:
         run: |
           set -uo pipefail
           PREFIX="reviews/pr-${PR_NUMBER}/${HEAD_SHA}"
-          if [ -n "${EXECUTION_FILE}" ] && [ -s "${EXECUTION_FILE}" ]; then
-            aws s3 cp "${EXECUTION_FILE}" "s3://${REVIEW_BUCKET}/${PREFIX}.transcript.json" --quiet || true
-            jq -c '[.[] | select(.type == "result")] | last | .structured_output // empty' \
-              "${EXECUTION_FILE}" > /tmp/structured.json 2>/dev/null || true
-          fi
-          COUNT=""
-          if [ -s /tmp/structured.json ]; then
-            COUNT=$(jq -r '.findings_count | select(type == "number" and . >= 0 and floor == .)' /tmp/structured.json 2>/dev/null)
-            read -r HIGH MEDIUM LOW < <(jq -r '[.high, .medium, .low] | map(select(type == "number" and . >= 0 and floor == .)) | if length == 3 then join(" ") else "" end' /tmp/structured.json 2>/dev/null) || true
-            if [ -n "$COUNT" ] && { [ -z "${LOW:-}" ] || [ $((HIGH + MEDIUM + LOW)) -ne "$COUNT" ]; }; then
-              COUNT=""
-            fi
-            jq -r '.report_markdown // empty' /tmp/structured.json > /tmp/findings.md 2>/dev/null
-          fi
-          if [ -z "$COUNT" ] || [ ! -s /tmp/findings.md ]; then
-            echo "result=incomplete" >> "$GITHUB_OUTPUT"
+          aws s3 cp "${EXECUTION_FILE}" "s3://${REVIEW_BUCKET}/${PREFIX}.transcript.json" --quiet || true
+          OUT=$(jq -c '[.[] | select(.type == "result")] | last | .structured_output
+            | select([.findings_count, .high, .medium, .low] | all(type == "number" and . >= 0 and floor == .))
+            | select(.high + .medium + .low == .findings_count)
+            | select((.report_markdown | type) == "string" and (.report_markdown | length) > 0)' \
+            "${EXECUTION_FILE}" 2>/dev/null)
+          if [ -n "$OUT" ] && { printf 'Reviewed commit: %s\n\n' "${HEAD_SHA}"; jq -r .report_markdown <<<"$OUT"; } \
+               | aws s3 cp - "s3://${REVIEW_BUCKET}/${PREFIX}.md" --quiet; then
+            jq -r '"result=complete\ncount=\(.findings_count)\nhigh=\(.high)\nmedium=\(.medium)\nlow=\(.low)"' <<<"$OUT" >> "$GITHUB_OUTPUT"
           else
-            { printf 'Reviewed commit: %s\n\n' "${HEAD_SHA}"; cat /tmp/findings.md; } > /tmp/report.md
-            if aws s3 cp /tmp/report.md "s3://${REVIEW_BUCKET}/${PREFIX}.md" --quiet; then
-              echo "result=complete" >> "$GITHUB_OUTPUT"
-              echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
-              echo "high=${HIGH}" >> "$GITHUB_OUTPUT"
-              echo "medium=${MEDIUM}" >> "$GITHUB_OUTPUT"
-              echo "low=${LOW}" >> "$GITHUB_OUTPUT"
-            else
-              echo "result=incomplete" >> "$GITHUB_OUTPUT"
-            fi
+            echo "result=incomplete" >> "$GITHUB_OUTPUT"
           fi
 
-  # No AWS credentials and no model in this job: it only turns the count
-  # into a PR comment.
   comment:
     name: Post Review Result
     needs: review
@@ -171,8 +131,6 @@ jobs:
           else
             BODY="Automated security review found ${COUNT} potential issue(s) in \`${HEAD_SHA}\`: **${HIGH} high, ${MEDIUM} medium, ${LOW} low**. Details are available to maintainers."
           fi
-          # One comment per commit: a re-run of the same SHA updates its own
-          # comment, and a new push gets a new one, so earlier results stay.
           MARKER="<!-- claude-security-review:${HEAD_SHA} -->"
           BODY="${BODY}"$'\n\n'"${MARKER}"
           EXISTING=$(gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
